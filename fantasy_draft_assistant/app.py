@@ -90,20 +90,32 @@ def sidebar_navigation():
     """Render sidebar navigation."""
     st.sidebar.title("Fantasy Draft Assistant")
     st.sidebar.divider()
-    
+    navigation_options = ["Home", "Rankings", "Player Profile", "Best Eleven", "Draft Tracker", "Teams", "Save / Load"]
+    requested_page = st.session_state.pop("requested_page", None)
+    if requested_page in navigation_options:
+        st.session_state["nav_radio"] = requested_page
     nav_option = st.sidebar.radio(
         "Navigate",
-        ["Home", "Rankings", "Best Eleven", "Draft Tracker", "Teams", "Save / Load"],
+        navigation_options,
         key="nav_radio"
     )
     return {
         "Home": "home",
         "Rankings": "rankings",
+        "Player Profile": "player_profile",
         "Best Eleven": "best_eleven",
         "Draft Tracker": "draft_tracker",
         "Teams": "teams",
         "Save / Load": "save_load",
     }[nav_option]
+
+
+def open_player_profile(player_name: str, season: str) -> None:
+    """Navigate to Player Profile with a player preselected."""
+    st.session_state["profile_target_player"] = player_name
+    st.session_state["profile_target_season"] = season
+    st.session_state["requested_page"] = "Player Profile"
+    st.rerun()
 
 
 def home_page():
@@ -198,11 +210,107 @@ def rankings_page():
         display_df = display_df.rename(columns={"Avg": "Actual Avg", "projected_avg": "Projected Avg"})
 
         st.dataframe(display_df, use_container_width=True, hide_index=True)
+        st.caption("Select a player to open their profile.")
+        player_columns = st.columns(min(len(rankings_df), 5))
+        for player_index, (_, player_row) in enumerate(rankings_df.iterrows()):
+            with player_columns[player_index % len(player_columns)]:
+                if st.button(
+                    player_row["Player"],
+                    key=f"open_profile_{position}_{player_index}",
+                    use_container_width=True,
+                ):
+                    open_player_profile(
+                        str(player_row["Player"]),
+                        str(player_row["season"]),
+                    )
 
         importance_df = engine.get_feature_importance(position).head(10).reset_index()
         importance_df.columns = ["Feature", "Importance"]
         st.caption(f"Top features for {position}")
         st.bar_chart(importance_df.set_index("Feature"))
+
+
+def player_profile_page():
+    """Show a player's statistics and percentile rank within their peer group."""
+    st.title("Player Profile")
+    engine = st.session_state.recommendation_engine.engine
+    data = engine.raw_data
+
+    target_season = st.session_state.pop("profile_target_season", None)
+    target_player = st.session_state.pop("profile_target_player", None)
+    season_options = sorted(data["season"].dropna().astype(str).unique(), reverse=True)
+    if target_season in season_options:
+        st.session_state["profile_season"] = target_season
+
+    season_choice = st.selectbox(
+        "Player season",
+        season_options,
+        key="profile_season",
+    )
+    season_data = data[data["season"].astype(str) == season_choice].copy()
+    player_options = sorted(season_data["Player"].dropna().astype(str).unique())
+    if target_player in player_options:
+        st.session_state["profile_player"] = target_player
+    player_name = st.selectbox(
+        "Player",
+        player_options,
+        key="profile_player",
+    )
+    player_rows = season_data[season_data["Player"] == player_name]
+    player = player_rows.sort_values("Avg", ascending=False).iloc[0]
+    position = str(player["Pos"])
+    position_data = season_data[season_data["Pos"] == position].copy()
+
+    st.subheader(f"{player_name} | {position} | {player['Club']}")
+    st.caption(f"Season: {season_choice} | Peer group: {position} players in {season_choice}")
+    st.dataframe(
+        pd.DataFrame([{
+            "Player": player_name,
+            "Position": position,
+            "Club": player["Club"],
+            "Actual Avg": player["Avg"],
+            "Price": player["Price"],
+        }]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    stat_columns = [
+        column for column in position_data.columns
+        if column not in {"Player", "Pos", "Club", "Avg", "Price", "sheet_name", "league", "season"}
+        and pd.api.types.is_numeric_dtype(position_data[column])
+    ]
+    profile_stats = []
+    for column in ["Avg"] + stat_columns:
+        peer_values = pd.to_numeric(position_data[column], errors="coerce").dropna()
+        player_value = pd.to_numeric(pd.Series([player[column]]), errors="coerce").iloc[0]
+        if pd.isna(player_value) or peer_values.empty:
+            percentile = None
+        else:
+            percentile = float((peer_values <= player_value).mean() * 100)
+        profile_stats.append({
+            "Statistic": column,
+            "Value": player_value,
+            "Percentile": percentile,
+        })
+
+    stats_df = pd.DataFrame(profile_stats)
+    st.subheader("Statistics and Percentiles")
+    st.dataframe(
+        stats_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Value": st.column_config.NumberColumn("Value", format="%.2f"),
+            "Percentile": st.column_config.ProgressColumn(
+                "Percentile",
+                help="Percentile compared with players in the same position and season.",
+                min_value=0,
+                max_value=100,
+                format="%.1f%%",
+            ),
+        },
+    )
 
 
 def best_eleven_page():
@@ -389,6 +497,8 @@ def main():
         home_page()
     elif nav == "rankings":
         rankings_page()
+    elif nav == "player_profile":
+        player_profile_page()
     elif nav == "best_eleven":
         best_eleven_page()
     elif nav == "draft_tracker":
