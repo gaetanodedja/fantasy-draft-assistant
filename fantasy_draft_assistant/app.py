@@ -131,6 +131,41 @@ def home_page():
     
     league = st.session_state.league_manager
 
+    with st.expander("League setup", expanded=True):
+        with st.form("league_setup_form"):
+            setup_col1, setup_col2 = st.columns(2)
+            with setup_col1:
+                team_count = st.number_input(
+                    "Number of teams",
+                    min_value=2,
+                    max_value=50,
+                    value=league.team_count,
+                    step=1,
+                    key="setup_team_count",
+                )
+            with setup_col2:
+                initial_budget = st.number_input(
+                    "Initial budget per team",
+                    min_value=1.0,
+                    max_value=100000.0,
+                    value=float(league.league_budget_limit),
+                    step=50.0,
+                    key="setup_initial_budget",
+                )
+            apply_setup = st.form_submit_button("Apply league setup")
+        if apply_setup:
+            if int(team_count) != league.team_count or float(initial_budget) != league.league_budget_limit:
+                new_league = LeagueManager(
+                    team_count=int(team_count),
+                    league_budget_limit=float(initial_budget),
+                )
+                new_league.create_teams([f"Team {i}" for i in range(1, int(team_count) + 1)])
+                st.session_state.league_manager = new_league
+                st.success("League setup updated. The draft has been reset.")
+                st.rerun()
+            else:
+                st.info("League setup is unchanged.")
+
     with st.expander("Set team names", expanded=True):
         with st.form("home_rename_teams_form"):
             renamed_teams = {
