@@ -280,6 +280,11 @@ def player_profile_page():
         if column not in {"Player", "Pos", "Club", "Avg", "Price", "sheet_name", "league", "season"}
         and pd.api.types.is_numeric_dtype(position_data[column])
     ]
+    position_model = st.session_state.recommendation_engine.engine.position_models.get(position)
+    if position_model is None:
+        position_model = st.session_state.recommendation_engine.engine.train_position_model(position)
+    feature_importance = position_model["feature_importance"]
+    total_importance = float(feature_importance.sum())
     profile_stats = []
     for column in ["Avg"] + stat_columns:
         peer_values = pd.to_numeric(position_data[column], errors="coerce").dropna()
@@ -288,10 +293,13 @@ def player_profile_page():
             percentile = None
         else:
             percentile = float((peer_values <= player_value).mean() * 100)
+        raw_importance = float(feature_importance.get(column, 0.0))
+        model_weight = (raw_importance / total_importance * 100) if total_importance else None
         profile_stats.append({
             "Statistic": column,
             "Value": player_value,
             "Percentile": percentile,
+            "Model Weight": model_weight,
         })
 
     stats_df = pd.DataFrame(profile_stats)
@@ -307,6 +315,11 @@ def player_profile_page():
                 help="Percentile compared with players in the same position and season.",
                 min_value=0,
                 max_value=100,
+                format="%.1f%%",
+            ),
+            "Model Weight": st.column_config.NumberColumn(
+                "Model Weight",
+                help="This statistic's share of total LightGBM feature importance for the player's position.",
                 format="%.1f%%",
             ),
         },
