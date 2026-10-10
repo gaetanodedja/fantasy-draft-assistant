@@ -1,0 +1,1 @@
+"""Local fantasy formation assistant."""
